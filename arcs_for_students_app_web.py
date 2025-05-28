@@ -1,138 +1,176 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
+import tempfile
 from datetime import datetime
-import io
+from fpdf import FPDF
 
-# --- フォント設定（日本語は避けて英字） ---
-plt.rcParams['font.family'] = 'sans-serif'
-plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans', 'sans-serif']
+DATA_FILE = "arcs_data.csv"
 
-st.set_page_config(page_title="ARCS モチベーション診断", layout="centered")
-st.title("🎓 学習モチベーション診断")
-st.write("以下の質問に1〜100で答えて、この科目・課題に対する今のあなたの「やる気」を分析してみましょう。")
+# --------------------
+# アドバイス生成
+# --------------------
+def generate_advice(row, previous_df=None):
+    advice = []
+    if row["attention"] <= 4:
+        advice.append("【Attention】教材に問いや驚きを含め、好奇心を刺激しましょう。")
+    if row["relevance"] <= 4:
+        advice.append("【Relevance】学習が自分の目標とつながっているか意識しましょう。")
+    if row["confidence"] <= 4:
+        advice.append("【Confidence】成功体験を積む工夫をして自信を高めましょう。")
+    if row["satisfaction"] <= 4:
+        advice.append("【Satisfaction】成果を振り返る機会をつくり、達成感を感じましょう。")
 
-# セッション履歴保持
-if 'records' not in st.session_state:
-    st.session_state.records = []
+    if previous_df is not None and len(previous_df) >= 1:
+        last = previous_df.iloc[-1]
+        diffs = {
+            "attention": row["attention"] - last["attention"],
+            "relevance": row["relevance"] - last["relevance"],
+            "confidence": row["confidence"] - last["confidence"],
+            "satisfaction": row["satisfaction"] - last["satisfaction"],
+        }
+        for key, diff in diffs.items():
+            if diff < 0:
+                advice.append(f"【{key.capitalize()}】前回より下がっています。要因を振り返ってみましょう。")
+            elif diff > 0:
+                advice.append(f"【{key.capitalize()}】前回より上昇しています。この調子を維持しましょう。")
 
-# 入力フォーム
-with st.form("arcs_form"):
-    name = st.text_input("お名前（ニックネーム可）")
-    user_id = st.text_input("学籍番号またはID")
-    attention = st.slider("1. 学習にワクワク感がありますか？", 1, 100, 50)
-    relevance = st.slider("2. 学びは自分に関係があると感じますか？", 1, 100, 50)
-    confidence = st.slider("3. この課題をやりきれる自信はありますか？", 1, 100, 50)
-    satisfaction = st.slider("4. 自分の学びに満足していますか？", 1, 100, 50)
-    submitted = st.form_submit_button("診断する")
+    return advice
 
-if submitted:
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    st.subheader("🔍 診断結果")
-    st.markdown("自己分析で30点未満を選んだ項目についてのアドバイス")
-    st.markdown("このレポートは印刷するか、PDF等で保存しておきましょう。")
-    st.markdown(f"### 【スコア】\n注意: {attention}｜関連性: {relevance}｜自信: {confidence}｜満足感: {satisfaction}")
-    st.markdown("---")
+# --------------------
+# 相関に基づくまとめアドバイス
+# --------------------
+def generate_summary_advice(user_df):
+    if len(user_df) < 5:
+        return "まだ十分なデータがないため、傾向分析はできません。"
 
-    advice_blocks = []
+    corr = user_df[["attention", "relevance", "confidence", "satisfaction"]].corr()
     summary = []
+    if corr.loc["confidence", "satisfaction"] > 0.6:
+        summary.append("💡Confidence（自信）が高まるとSatisfaction（満足感）も高まりやすい傾向があります。")
+    if corr.loc["attention", "confidence"] > 0.6:
+        summary.append("💡Attention（注意）が高まるとConfidence（自信）も上がる傾向があります。")
+    if corr.loc["relevance", "confidence"] > 0.6:
+        summary.append("💡Relevance（関連性）を感じるとConfidence（自信）も高まるようです。")
 
-    if attention < 30:
-        advice_blocks.append(("学習にワクワク感がありますか？", attention,
-                              "最近の学習が退屈に感じるなら、色を使ってノートを整理したり、生成AIでクイズを作って楽しむ方法もあります。"))
+    return "\n".join(summary) if summary else "強い相関は見られませんが、継続して記録しましょう。"
 
-    if relevance < 30:
-        advice_blocks.append(("学びは自分に関係があると感じますか？", relevance,
-                              "これを学ぶとどんな良いことがあるかを調べたり、周りの人に聞いてみるとヒントが見つかるかもしれません。"))
+# --------------------
+# PDF生成（グラフ画像含む）
+# --------------------
+def generate_pdf_report(name, latest, advice_list, summary_text, graph_path):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
 
-    if confidence < 30:
-        advice_blocks.append(("この課題をやりきれる自信はありますか？", confidence,
-                              "難しく感じたら、簡単なところから始めたり、5分だけやってみるなど、小さな一歩から挑戦してみましょう。"))
+    pdf.cell(200, 10, txt="ARCS Motivation Report", ln=True, align='C')
+    pdf.ln(10)
+    pdf.cell(200, 10, txt=f"Name: {name}", ln=True)
+    pdf.cell(200, 10, txt=f"Date: {latest['timestamp']}", ln=True)
+    pdf.ln(10)
 
-    if satisfaction < 30:
-        advice_blocks.append(("自分の学びに満足していますか？", satisfaction,
-                              "学んだことを誰かに話したり、ノートにまとめたりすると、達成感を感じやすくなります。"))
+    pdf.set_font("Arial", size=11)
+    pdf.cell(200, 10, txt="Scores:", ln=True)
+    for key in ["attention", "relevance", "confidence", "satisfaction"]:
+        pdf.cell(200, 10, txt=f"{key.capitalize()}: {latest[key]}", ln=True)
 
-    if not advice_blocks:
-        st.success("現在のモチベーションは良好のようです。この調子で継続して学びましょう！")
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Advice", ln=True)
+    pdf.set_font("Arial", size=11)
+    for a in advice_list:
+        pdf.multi_cell(0, 10, txt="- " + a)
+
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Summary Advice", ln=True)
+    pdf.set_font("Arial", size=11)
+    pdf.multi_cell(0, 10, txt=summary_text)
+
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Motivation Trend Graph", ln=True)
+    pdf.image(graph_path, w=180)
+
+    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf.output(temp_pdf.name)
+    return temp_pdf.name
+
+# --------------------
+# グラフ保存
+# --------------------
+def save_trend_graph(user_df):
+    user_df["timestamp"] = pd.to_datetime(user_df["timestamp"])
+    user_df = user_df.sort_values("timestamp")
+
+    fig, ax = plt.subplots()
+    for factor in ["attention", "relevance", "confidence", "satisfaction"]:
+        ax.plot(user_df["timestamp"], user_df[factor], marker="o", label=factor)
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Score")
+    ax.legend()
+    plt.xticks(rotation=30)
+
+    tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+    fig.savefig(tmpfile.name, bbox_inches='tight')
+    plt.close(fig)
+    return tmpfile.name
+
+# --------------------
+# Streamlit UI
+# --------------------
+st.title("ARCS Motivation Self-Check")
+name = st.text_input("Your Name")
+attention = st.slider("Attention", 1, 7, 4)
+relevance = st.slider("Relevance", 1, 7, 4)
+confidence = st.slider("Confidence", 1, 7, 4)
+satisfaction = st.slider("Satisfaction", 1, 7, 4)
+
+if st.button("Submit"):
+    if name.strip() == "":
+        st.warning("Please enter your name.")
     else:
-        for q, s, a in advice_blocks:
-            st.info(f"■ 質問：{q}\n\n▶ スコア：{s}点\n\n▶ アドバイス：{a}")
+        new_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "name": name,
+            "attention": attention,
+            "relevance": relevance,
+            "confidence": confidence,
+            "satisfaction": satisfaction,
+        }
+        if os.path.exists(DATA_FILE):
+            df = pd.read_csv(DATA_FILE)
+            df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
+        else:
+            df = pd.DataFrame([new_entry])
+        df.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
+        st.success("Saved!")
 
-    if satisfaction < 40 and relevance < 40:
-        summary.append("満足感が低く、学びの関連性も感じにくいようです。まずは「なぜ学ぶのか」を見直すことで、手応えも得られるようになるかもしれません。")
-    if attention > 60 and relevance < 40:
-        summary.append("興味はあるのに意味がわからない、という状態かもしれません。学習の目的やゴールを再確認するとよいでしょう。")
-    if confidence > 70 and satisfaction < 40:
-        summary.append("やりきれる見通しがあるのに満足できていないようです。学習成果をアウトプットして、達成感を得る工夫をしてみましょう。")
-    if relevance > 60 and confidence < 40:
-        summary.append("自分にとって重要とは思っていても、やりきれる自信がないようです。計画を細かく分けて、小さな成功体験を積みましょう。")
-    if attention < 40 and confidence > 60:
-        summary.append("自信はあるのに興味がわかないようです。実生活や他分野との接点を見つけると、意義を再発見できるかもしれません。")
+# --------------------
+# 傾向・アドバイス・PDF
+# --------------------
+if name.strip() != "" and os.path.exists(DATA_FILE):
+    df = pd.read_csv(DATA_FILE)
+    user_df = df[df["name"] == name]
+    if not user_df.empty:
+        st.subheader(f"{name}'s Motivation Trend")
+        graph_path = save_trend_graph(user_df)
+        st.image(graph_path)
 
-    if summary:
-        st.markdown("### 🧠 アドバイスのまとめ（要因間の関連から）")
-        for line in summary:
-            st.warning(f"📌 {line}")
-    summary_text = " / ".join(summary) if summary else ""
+        latest = user_df.iloc[-1]
+        previous = user_df.iloc[:-1] if len(user_df) > 1 else None
+        advice = generate_advice(latest, previous)
+        summary = generate_summary_advice(user_df)
 
-    # 診断履歴をセッションに保存
-    st.session_state.records.append({
-        "Date": now,
-        "Attention": attention,
-        "Relevance": relevance,
-        "Confidence": confidence,
-        "Satisfaction": satisfaction
-    })
+        st.subheader("📌 Advice")
+        for a in advice:
+            st.write("- " + a)
 
-    # ダウンロードボタン（1件分）
-    new_data = pd.DataFrame([{
-        "Name": name,
-        "ID": user_id,
-        "Date": now,
-        "Attention": attention,
-        "Relevance": relevance,
-        "Confidence": confidence,
-        "Satisfaction": satisfaction,
-        "Summary": summary_text
-    }])
-    csv_buffer = io.StringIO()
-    new_data.to_csv(csv_buffer, index=False, encoding="utf-8")
-    st.download_button(
-        label="📥 この診断結果をCSVで保存",
-        data=csv_buffer.getvalue(),
-        file_name="my_motivation_result.csv",
-        mime="text/csv"
-    )
+        st.subheader("📊 Summary Advice")
+        st.write(summary)
 
-    # 推移グラフ（セッション内のみ）
-    st.markdown("---")
-    st.subheader("📈 モチベーション推移グラフ（このセッション内）")
-
-    df_history = pd.DataFrame(st.session_state.records)
-    if len(df_history) >= 2:
-        df_history["Date"] = pd.to_datetime(df_history["Date"])
-        df_history = df_history.sort_values("Date")
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(df_history["Date"], df_history["Attention"], label="Attention")
-        ax.plot(df_history["Date"], df_history["Relevance"], label="Relevance")
-        ax.plot(df_history["Date"], df_history["Confidence"], label="Confidence")
-        ax.plot(df_history["Date"], df_history["Satisfaction"], label="Satisfaction")
-        ax.set_ylabel("Score (1–100)")
-        ax.set_xlabel("Date")
-        ax.set_title(f"{name}'s Motivation Over Time")
-        ax.legend()
-        ax.grid(True)
-        st.pyplot(fig)
-    else:
-        st.info("記録がまだ1件のため、推移グラフは表示されません。")
-
-    # 常時表示：ARCS凡例
-    st.markdown("""
-    ---
-    📝 **凡例の意味：**
-    - Attention = 注意（学習に関心が向いているかどうか）  
-    - Relevance = 関連性（学習内容や方法が、自分に関連性がある、意味があると感じられているかどうか）  
-    - Confidence = 自信（学習を最後までやりきれるという見通しが経っているかどうか）  
-    - Satisfaction = 満足感（学習した結果に対する達成感や納得感があるかどうか）
-    """)
+        if st.button("Generate PDF Report"):
+            pdf_path = generate_pdf_report(name, latest, advice, summary, graph_path)
+            with open(pdf_path, "rb") as f:
+                st.download_button("Download PDF", f, file_name=f"ARCS_Report_{name}.pdf", mime="application/pdf")
