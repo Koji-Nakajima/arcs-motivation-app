@@ -19,7 +19,6 @@ def generate_advice(row, previous_df=None):
         advice.append("【Confidence】できた経験を積みましょう。")
     if row["satisfaction"] < 50:
         advice.append("【Satisfaction】成果を振り返りましょう。")
-
     if previous_df is not None and len(previous_df) >= 1:
         last = previous_df.iloc[-1]
         for key in ["attention", "relevance", "confidence", "satisfaction"]:
@@ -28,10 +27,9 @@ def generate_advice(row, previous_df=None):
                 advice.append(f"【{key.capitalize()}】前回より下がっています。")
             elif diff > 0:
                 advice.append(f"【{key.capitalize()}】前回より向上しています。")
-
     return advice
 
-# --- 要因間のまとめアドバイス ---
+# --- 相関ベースのまとめアドバイス ---
 def generate_summary_advice(user_df):
     if len(user_df) < 5:
         return "十分なデータがないため、傾向分析はまだ行えません。"
@@ -61,7 +59,7 @@ def save_trend_graph(user_df):
     plt.close(fig)
     return tmpfile.name
 
-# --- PDF生成 ---
+# --- PDF出力 ---
 def generate_pdf_report(name, student_id, latest, advice_list, summary_text, graph_path):
     pdf = FPDF()
     pdf.add_page()
@@ -124,28 +122,26 @@ if st.button("Submit"):
         df.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
         st.success("保存しました。")
 
-# --- 傾向表示とPDF出力 ---
-if student_id.strip() and os.path.exists(DATA_FILE):
-    df = pd.read_csv(DATA_FILE)
-    user_df = df[df["student_id"] == student_id]
-    if not user_df.empty:
-        st.subheader(f"{name} さんのモチベーション傾向")
-        graph_path = save_trend_graph(user_df)
-        st.image(graph_path)
+        # 保存後すぐに傾向とアドバイス表示
+        user_df = df[df["student_id"] == student_id]
+        if not user_df.empty:
+            st.subheader(f"{name} さんのモチベーション傾向")
+            graph_path = save_trend_graph(user_df)
+            st.image(graph_path)
 
-        latest = user_df.iloc[-1]
-        previous = user_df.iloc[:-1] if len(user_df) > 1 else None
-        advice = generate_advice(latest, previous)
-        summary = generate_summary_advice(user_df)
+            latest = user_df.iloc[-1]
+            previous = user_df.iloc[:-1] if len(user_df) > 1 else None
+            advice = generate_advice(latest, previous)
+            summary = generate_summary_advice(user_df)
 
-        st.subheader("📌 アドバイス")
-        for a in advice:
-            st.write("- " + a)
+            st.subheader("📌 アドバイス")
+            for a in advice:
+                st.write("- " + a)
 
-        st.subheader("📊 まとめアドバイス")
-        st.write(summary)
+            st.subheader("📊 まとめアドバイス")
+            st.write(summary)
 
-        if st.button("PDFで出力する"):
-            pdf_path = generate_pdf_report(name, student_id, latest, advice, summary, graph_path)
-            with open(pdf_path, "rb") as f:
-                st.download_button("Download PDF", f, file_name=f"ARCS_Report_{student_id}.pdf", mime="application/pdf")
+            if st.button("PDFで出力する"):
+                pdf_path = generate_pdf_report(name, student_id, latest, advice, summary, graph_path)
+                with open(pdf_path, "rb") as f:
+                    st.download_button("Download PDF", f, file_name=f"ARCS_Report_{student_id}.pdf", mime="application/pdf")
