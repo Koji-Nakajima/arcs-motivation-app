@@ -8,102 +8,47 @@ from fpdf import FPDF
 
 DATA_FILE = "arcs_data.csv"
 
-# --------------------
-# アドバイス生成
-# --------------------
+# --- アドバイス生成 ---
 def generate_advice(row, previous_df=None):
     advice = []
-    if row["attention"] <= 4:
-        advice.append("【Attention】教材に問いや驚きを含め、好奇心を刺激しましょう。")
-    if row["relevance"] <= 4:
-        advice.append("【Relevance】学習が自分の目標とつながっているか意識しましょう。")
-    if row["confidence"] <= 4:
-        advice.append("【Confidence】成功体験を積む工夫をして自信を高めましょう。")
-    if row["satisfaction"] <= 4:
-        advice.append("【Satisfaction】成果を振り返る機会をつくり、達成感を感じましょう。")
+    if row["attention"] < 50:
+        advice.append("【Attention】問いや驚きで好奇心を刺激しましょう。")
+    if row["relevance"] < 50:
+        advice.append("【Relevance】自分の目標との関係を考えましょう。")
+    if row["confidence"] < 50:
+        advice.append("【Confidence】できた経験を積みましょう。")
+    if row["satisfaction"] < 50:
+        advice.append("【Satisfaction】成果を振り返りましょう。")
 
     if previous_df is not None and len(previous_df) >= 1:
         last = previous_df.iloc[-1]
-        diffs = {
-            "attention": row["attention"] - last["attention"],
-            "relevance": row["relevance"] - last["relevance"],
-            "confidence": row["confidence"] - last["confidence"],
-            "satisfaction": row["satisfaction"] - last["satisfaction"],
-        }
-        for key, diff in diffs.items():
+        for key in ["attention", "relevance", "confidence", "satisfaction"]:
+            diff = row[key] - last[key]
             if diff < 0:
-                advice.append(f"【{key.capitalize()}】前回より下がっています。要因を振り返ってみましょう。")
+                advice.append(f"【{key.capitalize()}】前回より下がっています。")
             elif diff > 0:
-                advice.append(f"【{key.capitalize()}】前回より上昇しています。この調子を維持しましょう。")
+                advice.append(f"【{key.capitalize()}】前回より向上しています。")
 
     return advice
 
-# --------------------
-# 相関に基づくまとめアドバイス
-# --------------------
+# --- 要因間のまとめアドバイス ---
 def generate_summary_advice(user_df):
     if len(user_df) < 5:
-        return "まだ十分なデータがないため、傾向分析はできません。"
-
+        return "十分なデータがないため、傾向分析はまだ行えません。"
     corr = user_df[["attention", "relevance", "confidence", "satisfaction"]].corr()
     summary = []
     if corr.loc["confidence", "satisfaction"] > 0.6:
-        summary.append("💡Confidence（自信）が高まるとSatisfaction（満足感）も高まりやすい傾向があります。")
+        summary.append("💡Confidence（自信）が上がるとSatisfactionも上がりやすい傾向があります。")
     if corr.loc["attention", "confidence"] > 0.6:
-        summary.append("💡Attention（注意）が高まるとConfidence（自信）も上がる傾向があります。")
+        summary.append("💡Attention（注意）を高めるとConfidenceも向上しやすい傾向があります。")
     if corr.loc["relevance", "confidence"] > 0.6:
-        summary.append("💡Relevance（関連性）を感じるとConfidence（自信）も高まるようです。")
+        summary.append("💡Relevance（関連性）を感じるとConfidenceが上がる傾向があります。")
+    return "\n".join(summary) if summary else "強い傾向は見られませんでしたが、継続して記録しましょう。"
 
-    return "\n".join(summary) if summary else "強い相関は見られませんが、継続して記録しましょう。"
-
-# --------------------
-# PDF生成（グラフ画像含む）
-# --------------------
-def generate_pdf_report(name, latest, advice_list, summary_text, graph_path):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-
-    pdf.cell(200, 10, txt="ARCS Motivation Report", ln=True, align='C')
-    pdf.ln(10)
-    pdf.cell(200, 10, txt=f"Name: {name}", ln=True)
-    pdf.cell(200, 10, txt=f"Date: {latest['timestamp']}", ln=True)
-    pdf.ln(10)
-
-    pdf.set_font("Arial", size=11)
-    pdf.cell(200, 10, txt="Scores:", ln=True)
-    for key in ["attention", "relevance", "confidence", "satisfaction"]:
-        pdf.cell(200, 10, txt=f"{key.capitalize()}: {latest[key]}", ln=True)
-
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Advice", ln=True)
-    pdf.set_font("Arial", size=11)
-    for a in advice_list:
-        pdf.multi_cell(0, 10, txt="- " + a)
-
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Summary Advice", ln=True)
-    pdf.set_font("Arial", size=11)
-    pdf.multi_cell(0, 10, txt=summary_text)
-
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Motivation Trend Graph", ln=True)
-    pdf.image(graph_path, w=180)
-
-    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    pdf.output(temp_pdf.name)
-    return temp_pdf.name
-
-# --------------------
-# グラフ保存
-# --------------------
+# --- グラフ保存 ---
 def save_trend_graph(user_df):
     user_df["timestamp"] = pd.to_datetime(user_df["timestamp"])
     user_df = user_df.sort_values("timestamp")
-
     fig, ax = plt.subplots()
     for factor in ["attention", "relevance", "confidence", "satisfaction"]:
         ax.plot(user_df["timestamp"], user_df[factor], marker="o", label=factor)
@@ -111,28 +56,60 @@ def save_trend_graph(user_df):
     ax.set_ylabel("Score")
     ax.legend()
     plt.xticks(rotation=30)
-
     tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
     fig.savefig(tmpfile.name, bbox_inches='tight')
     plt.close(fig)
     return tmpfile.name
 
-# --------------------
-# Streamlit UI
-# --------------------
+# --- PDF生成 ---
+def generate_pdf_report(name, student_id, latest, advice_list, summary_text, graph_path):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="ARCS Motivation Report", ln=True, align='C')
+    pdf.ln(10)
+    pdf.cell(200, 10, txt=f"Name: {name}", ln=True)
+    pdf.cell(200, 10, txt=f"Student ID: {student_id}", ln=True)
+    pdf.cell(200, 10, txt=f"Date: {latest['timestamp']}", ln=True)
+    pdf.ln(5)
+    for key in ["attention", "relevance", "confidence", "satisfaction"]:
+        pdf.cell(200, 10, txt=f"{key.capitalize()}: {latest[key]}", ln=True)
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Advice", ln=True)
+    pdf.set_font("Arial", size=11)
+    for a in advice_list:
+        pdf.multi_cell(0, 10, txt="- " + a)
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="Summary Advice", ln=True)
+    pdf.set_font("Arial", size=11)
+    pdf.multi_cell(0, 10, txt=summary_text)
+    pdf.ln(5)
+    pdf.cell(200, 10, txt="Motivation Trend Graph", ln=True)
+    pdf.image(graph_path, w=180)
+    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    pdf.output(temp_pdf.name)
+    return temp_pdf.name
+
+# --- UI表示 ---
 st.title("ARCS Motivation Self-Check")
+
+student_id = st.text_input("Student ID")
 name = st.text_input("Your Name")
-attention = st.slider("Attention", 1, 7, 4)
-relevance = st.slider("Relevance", 1, 7, 4)
-confidence = st.slider("Confidence", 1, 7, 4)
-satisfaction = st.slider("Satisfaction", 1, 7, 4)
+
+attention = st.slider("Attention", 1, 100, 50)
+relevance = st.slider("Relevance", 1, 100, 50)
+confidence = st.slider("Confidence", 1, 100, 50)
+satisfaction = st.slider("Satisfaction", 1, 100, 50)
 
 if st.button("Submit"):
-    if name.strip() == "":
-        st.warning("Please enter your name.")
+    if student_id.strip() == "" or name.strip() == "":
+        st.warning("Student IDとNameの両方を入力してください。")
     else:
         new_entry = {
             "timestamp": datetime.now().isoformat(),
+            "student_id": student_id,
             "name": name,
             "attention": attention,
             "relevance": relevance,
@@ -145,16 +122,14 @@ if st.button("Submit"):
         else:
             df = pd.DataFrame([new_entry])
         df.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
-        st.success("Saved!")
+        st.success("保存しました。")
 
-# --------------------
-# 傾向・アドバイス・PDF
-# --------------------
-if name.strip() != "" and os.path.exists(DATA_FILE):
+# --- 傾向表示とPDF出力 ---
+if student_id.strip() and os.path.exists(DATA_FILE):
     df = pd.read_csv(DATA_FILE)
-    user_df = df[df["name"] == name]
+    user_df = df[df["student_id"] == student_id]
     if not user_df.empty:
-        st.subheader(f"{name}'s Motivation Trend")
+        st.subheader(f"{name} さんのモチベーション傾向")
         graph_path = save_trend_graph(user_df)
         st.image(graph_path)
 
@@ -163,14 +138,14 @@ if name.strip() != "" and os.path.exists(DATA_FILE):
         advice = generate_advice(latest, previous)
         summary = generate_summary_advice(user_df)
 
-        st.subheader("📌 Advice")
+        st.subheader("📌 アドバイス")
         for a in advice:
             st.write("- " + a)
 
-        st.subheader("📊 Summary Advice")
+        st.subheader("📊 まとめアドバイス")
         st.write(summary)
 
-        if st.button("Generate PDF Report"):
-            pdf_path = generate_pdf_report(name, latest, advice, summary, graph_path)
+        if st.button("PDFで出力する"):
+            pdf_path = generate_pdf_report(name, student_id, latest, advice, summary, graph_path)
             with open(pdf_path, "rb") as f:
-                st.download_button("Download PDF", f, file_name=f"ARCS_Report_{name}.pdf", mime="application/pdf")
+                st.download_button("Download PDF", f, file_name=f"ARCS_Report_{student_id}.pdf", mime="application/pdf")
