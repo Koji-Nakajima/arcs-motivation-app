@@ -29,7 +29,7 @@ def generate_advice(row, previous_df=None):
                 advice.append(f"【{key.capitalize()}】前回より向上しています。")
     return advice
 
-# --- 相関ベースのまとめアドバイス ---
+# --- まとめアドバイス ---
 def generate_summary_advice(user_df):
     if len(user_df) < 5:
         return "十分なデータがないため、傾向分析はまだ行えません。"
@@ -59,7 +59,7 @@ def save_trend_graph(user_df):
     plt.close(fig)
     return tmpfile.name
 
-# --- PDF出力 ---
+# --- PDF生成 ---
 def generate_pdf_report(name, student_id, latest, advice_list, summary_text, graph_path):
     pdf = FPDF()
     pdf.add_page()
@@ -101,6 +101,7 @@ relevance = st.slider("Relevance", 1, 100, 50)
 confidence = st.slider("Confidence", 1, 100, 50)
 satisfaction = st.slider("Satisfaction", 1, 100, 50)
 
+# Submit 処理
 if st.button("Submit"):
     if student_id.strip() == "" or name.strip() == "":
         st.warning("Student IDとNameの両方を入力してください。")
@@ -122,26 +123,34 @@ if st.button("Submit"):
         df.to_csv(DATA_FILE, index=False, encoding='utf-8-sig')
         st.success("保存しました。")
 
-        # 保存後すぐに傾向とアドバイス表示
+        # 最新データをセッションに保持
         user_df = df[df["student_id"] == student_id]
-        if not user_df.empty:
-            st.subheader(f"{name} さんのモチベーション傾向")
-            graph_path = save_trend_graph(user_df)
-            st.image(graph_path)
+        st.session_state["latest"] = user_df.iloc[-1]
+        st.session_state["user_df"] = user_df
+        st.session_state["graph_path"] = save_trend_graph(user_df)
+        st.session_state["advice"] = generate_advice(st.session_state["latest"], user_df.iloc[:-1])
+        st.session_state["summary"] = generate_summary_advice(user_df)
 
-            latest = user_df.iloc[-1]
-            previous = user_df.iloc[:-1] if len(user_df) > 1 else None
-            advice = generate_advice(latest, previous)
-            summary = generate_summary_advice(user_df)
+# アドバイス・PDF 出力
+if "latest" in st.session_state:
+    st.subheader(f"{st.session_state['latest']['name']} さんのモチベーション傾向")
+    st.image(st.session_state["graph_path"])
 
-            st.subheader("📌 アドバイス")
-            for a in advice:
-                st.write("- " + a)
+    st.subheader("📌 アドバイス")
+    for a in st.session_state["advice"]:
+        st.write("- " + a)
 
-            st.subheader("📊 まとめアドバイス")
-            st.write(summary)
+    st.subheader("📊 まとめアドバイス")
+    st.write(st.session_state["summary"])
 
-            if st.button("PDFで出力する"):
-                pdf_path = generate_pdf_report(name, student_id, latest, advice, summary, graph_path)
-                with open(pdf_path, "rb") as f:
-                    st.download_button("Download PDF", f, file_name=f"ARCS_Report_{student_id}.pdf", mime="application/pdf")
+    if st.button("PDFで出力する"):
+        pdf_path = generate_pdf_report(
+            name=st.session_state["latest"]["name"],
+            student_id=st.session_state["latest"]["student_id"],
+            latest=st.session_state["latest"],
+            advice_list=st.session_state["advice"],
+            summary_text=st.session_state["summary"],
+            graph_path=st.session_state["graph_path"]
+        )
+        with open(pdf_path, "rb") as f:
+            st.download_button("Download PDF", f, file_name=f"ARCS_Report_{student_id}.pdf", mime="application/pdf")
