@@ -39,6 +39,100 @@ if submitted:
 
     if attention < 30:
         advice_blocks.append(("学習にワクワク感がありますか？", attention,
-                              "最近の学習が退屈に感じるなら、色を使ってノートを整理したり、生成AIでクイズを作ってみるのがおすすめです。"))
+                              "最近の学習が退屈に感じるなら、色を使ってノートを整理したり、生成AIでクイズを作って楽しむ方法もあります。"))
+
     if relevance < 30:
-        advice_blocks.append(("学びは自分に関係があると感じますか_
+        advice_blocks.append(("学びは自分に関係があると感じますか？", relevance,
+                              "これを学ぶとどんな良いことがあるかを調べたり、周りの人に聞いてみるとヒントが見つかるかもしれません。"))
+
+    if confidence < 30:
+        advice_blocks.append(("この課題をやりきれる自信はありますか？", confidence,
+                              "難しく感じたら、簡単なところから始めたり、5分だけやってみるなど、小さな一歩から挑戦してみましょう。"))
+
+    if satisfaction < 30:
+        advice_blocks.append(("自分の学びに満足していますか？", satisfaction,
+                              "学んだことを誰かに話したり、ノートにまとめたりすると、達成感を感じやすくなります。"))
+
+    if not advice_blocks:
+        st.success("現在のモチベーションは良好のようです。この調子で継続して学びましょう！")
+    else:
+        for q, s, a in advice_blocks:
+            st.info(f"■ 質問：{q}\n\n▶ スコア：{s}点\n\n▶ アドバイス：{a}")
+
+    if satisfaction < 40 and relevance < 40:
+        summary.append("満足感が低く、学びの関連性も感じにくいようです。まずは「なぜ学ぶのか」を見直すことで、手応えも得られるようになるかもしれません。")
+    if attention > 60 and relevance < 40:
+        summary.append("興味はあるのに意味がわからない、という状態かもしれません。学習の目的やゴールを再確認するとよいでしょう。")
+    if confidence > 70 and satisfaction < 40:
+        summary.append("やりきれる見通しがあるのに満足できていないようです。学習成果をアウトプットして、達成感を得る工夫をしてみましょう。")
+    if relevance > 60 and confidence < 40:
+        summary.append("自分にとって重要とは思っていても、やりきれる自信がないようです。計画を細かく分けて、小さな成功体験を積みましょう。")
+    if attention < 40 and confidence > 60:
+        summary.append("自信はあるのに興味がわかないようです。実生活や他分野との接点を見つけると、意義を再発見できるかもしれません。")
+
+    if summary:
+        st.markdown("### 🧠 アドバイスのまとめ（要因間の関連から）")
+        for line in summary:
+            st.warning(f"📌 {line}")
+    summary_text = " / ".join(summary) if summary else ""
+
+    # 診断履歴をセッションに保存
+    st.session_state.records.append({
+        "Date": now,
+        "Attention": attention,
+        "Relevance": relevance,
+        "Confidence": confidence,
+        "Satisfaction": satisfaction
+    })
+
+    # ダウンロードボタン（1件分）
+    new_data = pd.DataFrame([{
+        "Name": name,
+        "ID": user_id,
+        "Date": now,
+        "Attention": attention,
+        "Relevance": relevance,
+        "Confidence": confidence,
+        "Satisfaction": satisfaction,
+        "Summary": summary_text
+    }])
+    csv_buffer = io.StringIO()
+    new_data.to_csv(csv_buffer, index=False, encoding="utf-8")
+    st.download_button(
+        label="📥 この診断結果をCSVで保存",
+        data=csv_buffer.getvalue(),
+        file_name="my_motivation_result.csv",
+        mime="text/csv"
+    )
+
+    # 推移グラフ（セッション内のみ）
+    st.markdown("---")
+    st.subheader("📈 モチベーション推移グラフ（このセッション内）")
+
+    df_history = pd.DataFrame(st.session_state.records)
+    if len(df_history) >= 2:
+        df_history["Date"] = pd.to_datetime(df_history["Date"])
+        df_history = df_history.sort_values("Date")
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(df_history["Date"], df_history["Attention"], label="Attention")
+        ax.plot(df_history["Date"], df_history["Relevance"], label="Relevance")
+        ax.plot(df_history["Date"], df_history["Confidence"], label="Confidence")
+        ax.plot(df_history["Date"], df_history["Satisfaction"], label="Satisfaction")
+        ax.set_ylabel("Score (1–100)")
+        ax.set_xlabel("Date")
+        ax.set_title(f"{name}'s Motivation Over Time")
+        ax.legend()
+        ax.grid(True)
+        st.pyplot(fig)
+    else:
+        st.info("記録がまだ1件のため、推移グラフは表示されません。")
+
+    # 常時表示：ARCS凡例
+    st.markdown("""
+    ---
+    📝 **凡例の意味：**
+    - Attention = 注意（学習に関心が向いているかどうか）  
+    - Relevance = 関連性（学習内容や方法が、自分に関連性がある、意味があると感じられているかどうか）  
+    - Confidence = 自信（学習を最後までやりきれるという見通しが経っているかどうか）  
+    - Satisfaction = 満足感（学習した結果に対する達成感や納得感があるかどうか）
+    """)
